@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Trash2 } from "lucide-react";
 import type { Chat } from "~/chat/chat.server";
 
 interface SidebarProps {
@@ -6,6 +7,7 @@ interface SidebarProps {
   currentChatId: string | null;
   onSelectChat: (chatId: string) => void;
   onNewChat: () => void;
+  onDeleteChat: (chatId: string) => void;
 }
 
 export default function Sidebar({
@@ -13,6 +15,7 @@ export default function Sidebar({
   currentChatId,
   onSelectChat,
   onNewChat,
+  onDeleteChat,
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -23,10 +26,14 @@ export default function Sidebar({
       (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24)
     );
 
-    if (diffDays === 0) return "Today";
+    if (diffDays === 0) return formatTime(d);
     if (diffDays === 1) return "Yesterday";
     if (diffDays < 7) return `${diffDays} days ago`;
-    return d.toLocaleDateString();
+    return formatDate(d);
+  };
+
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
   return (
@@ -77,20 +84,34 @@ export default function Sidebar({
           ) : (
             <div className="space-y-1">
               {chats.map((chat) => (
-                <button
+                <div
                   key={chat.id}
-                  onClick={() => onSelectChat(chat.id)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                  className={`group flex items-center rounded-lg text-sm transition-colors ${
                     currentChatId === chat.id
                       ? "bg-gray-300 text-gray-900"
                       : "hover:bg-gray-200 text-gray-700"
                   }`}
                 >
-                  <div className="truncate">Chat</div>
-                  <div className="text-xs text-gray-500">
-                    {formatDate(chat.updatedAt)}
-                  </div>
-                </button>
+                  <button
+                    onClick={() => onSelectChat(chat.id)}
+                    className="flex-1 text-left px-3 py-2 min-w-0"
+                  >
+                    <div className="truncate">{chat.title || "New chat"}</div>
+                    <div className="text-xs text-gray-500">
+                      {formatDate(chat.updatedAt)}
+                    </div>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteChat(chat.id);
+                    }}
+                    className="p-2 mr-1 opacity-0 group-hover:opacity-100 hover:bg-gray-300 rounded transition-all"
+                    title="Delete chat"
+                  >
+                    <Trash2 className="w-4 h-4 text-gray-500 hover:text-red-500" />
+                  </button>
+                </div>
               ))}
             </div>
           )}

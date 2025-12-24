@@ -15,6 +15,13 @@
       "when": 1766616056237,
       "tag": "0001_charming_selene",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1766616857571,
+      "tag": "0002_huge_shotgun",
+      "breakpoints": true
     }
   ]
 }

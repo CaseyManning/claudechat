@@ -1,5 +1,11 @@
 import { useState, useRef, useEffect } from "react";
-import { useFetcher, useLoaderData, useSearchParams } from "react-router";
+import {
+  href,
+  redirect,
+  useFetcher,
+  useLoaderData,
+  useSearchParams,
+} from "react-router";
 import type { Route } from "./+types/home";
 import { getUser } from "~/utils/global-context";
 import {
@@ -8,10 +14,12 @@ import {
   getUserChats,
   getChatMessages,
   saveMessage,
+  deleteChat,
   type Message,
   type Chat,
 } from "~/chat/chat.server";
 import Sidebar from "~/components/sidebar";
+import TwemojiText from "~/components/twemoji-text";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Chat" }];
@@ -44,7 +52,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   if (actionType === "newChat") {
     const chatId = await createChat(user.id);
-    return { newChatId: chatId };
+    return redirect(`/?chat=${chatId}`);
   }
 
   if (actionType === "sendMessage") {
@@ -53,66 +61,52 @@ export async function action({ request }: Route.ActionArgs) {
     const userMessage = formData.get("userMessage") as string;
     const messages: Message[] = JSON.parse(messagesJson);
 
-    // Save user message
-    await saveMessage(chatId, "user", userMessage);
-
-    // Get AI response
+    const { title } = await saveMessage(chatId, "user", userMessage);
     const response = await sendMessage(messages);
+    if (response) {
+      await saveMessage(chatId, "assistant", response);
+    }
 
-    // Save AI response
-    await saveMessage(chatId, "assistant", response);
+    return { response, chatId, title };
+  }
 
-    return { response };
+  if (actionType === "deleteChat") {
+    const chatId = formData.get("chatId") as string;
+    await deleteChat(chatId);
+    return { deletedChatId: chatId };
   }
 
   return null;
 }
 
 export default function Home() {
-  const { chats, currentChatId, initialMessages } =
-    useLoaderData<typeof loader>();
+  const { chats, initialMessages } = useLoaderData<typeof loader>();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState("");
-  const [activeChatId, setActiveChatId] = useState<string | null>(
-    currentChatId
-  );
-  const [chatList, setChatList] = useState<Chat[]>(chats);
+
   const fetcher = useFetcher<typeof action>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  const activeChatId = searchParams.get("chat");
 
   const isLoading =
     fetcher.state === "submitting" || fetcher.state === "loading";
 
-  // Sync chatList when loader data changes
-  useEffect(() => {
-    setChatList(chats);
-  }, [chats]);
-
   // Handle response from server
   useEffect(() => {
-    if (fetcher.data?.response && fetcher.state === "idle") {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: fetcher.data!.response },
-      ]);
+    const resp = fetcher.data?.response;
+    if (resp && fetcher.state === "idle") {
+      setMessages((prev) => [...prev, { role: "assistant", content: resp }]);
     }
-    if (fetcher.data?.newChatId && fetcher.state === "idle") {
-      const newChatId = fetcher.data.newChatId;
-      setActiveChatId(newChatId);
-      setMessages([]);
-      setSearchParams({ chat: newChatId });
-      // Add to chat list only if not already present
-      setChatList((prev) => {
-        if (prev.some((c) => c.id === newChatId)) return prev;
-        return [
-          { id: newChatId, createdAt: new Date(), updatedAt: new Date() },
-          ...prev,
-        ];
-      });
+    if (fetcher.data?.deletedChatId && fetcher.state === "idle") {
+      const deletedId = fetcher.data.deletedChatId;
+      if (activeChatId === deletedId) {
+        setMessages([]);
+        setSearchParams({});
+      }
     }
-  }, [fetcher.data, fetcher.state, setSearchParams]);
+  }, [fetcher.data, fetcher.state, setSearchParams, activeChatId]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -128,18 +122,20 @@ export default function Home() {
     }
   }, [input]);
 
-  // Load messages when chat changes
   useEffect(() => {
     setMessages(initialMessages);
   }, [initialMessages]);
 
   const handleSelectChat = async (chatId: string) => {
-    setActiveChatId(chatId);
     setSearchParams({ chat: chatId });
   };
 
   const handleNewChat = () => {
     fetcher.submit({ _action: "newChat" }, { method: "post" });
+  };
+
+  const handleDeleteChat = (chatId: string) => {
+    fetcher.submit({ _action: "deleteChat", chatId }, { method: "post" });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -148,7 +144,6 @@ export default function Home() {
 
     let chatId = activeChatId;
 
-    // Create new chat if none exists
     if (!chatId) {
       // We need to create a chat first, then send message
       // For simplicity, create chat inline
@@ -188,10 +183,11 @@ export default function Home() {
   return (
     <div className="flex h-screen bg-[#f9f9f9] font-mono">
       <Sidebar
-        chats={chatList}
+        chats={chats}
         currentChatId={activeChatId}
         onSelectChat={handleSelectChat}
         onNewChat={handleNewChat}
+        onDeleteChat={handleDeleteChat}
       />
 
       <div className="flex-1 flex flex-col">
@@ -216,7 +212,10 @@ export default function Home() {
                       : "bg-white border border-gray-200 text-gray-800"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{message.content}</p>
+                  <TwemojiText
+                    text={message.content}
+                    className="whitespace-pre-wrap"
+                  />
                 </div>
               </div>
             ))}
@@ -253,6 +252,7 @@ export default function Home() {
               <textarea
                 ref={textareaRef}
                 value={input}
+                key={"input-" + messages.length}
                 onChange={(e) => setInput(e.target.value)}
                 autoFocus
                 onKeyDown={handleKeyDown}
