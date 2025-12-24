@@ -8,6 +8,13 @@
       "when": 1766612581168,
       "tag": "0000_left_preak",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1766616056237,
+      "tag": "0001_charming_selene",
+      "breakpoints": true
     }
   ]
 }

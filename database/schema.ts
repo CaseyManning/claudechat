@@ -37,11 +37,14 @@ export const chats = pgTable("chats", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const messageRoleEnum = pgEnum("message_role", ["user", "assistant"]);
+
 export const messages = pgTable("messages", {
   id: uuid().primaryKey().defaultRandom(),
   chatId: uuid("chat_id")
     .notNull()
     .references(() => chats.id, { onDelete: "cascade" }),
+  role: messageRoleEnum("role").notNull(),
   content: text("content").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
