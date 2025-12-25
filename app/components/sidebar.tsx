@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { ChevronLeft, Trash2 } from "lucide-react";
 import type { Chat } from "~/chat/chat.server";
 
 interface SidebarProps {
@@ -39,7 +39,7 @@ export default function Sidebar({
   return (
     <div
       className={`h-screen bg-gray-100 border-r border-gray-200 flex flex-col transition-all duration-300 ${
-        isCollapsed ? "w-12" : "w-64"
+        isCollapsed ? "w-14" : "w-64"
       }`}
     >
       {/* Header */}
@@ -57,20 +57,9 @@ export default function Sidebar({
           className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
           title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            className={`w-5 h-5 text-gray-600 transition-transform ${
-              isCollapsed ? "rotate-180" : ""
-            }`}
-          >
-            <path
-              fillRule="evenodd"
-              d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z"
-              clipRule="evenodd"
-            />
-          </svg>
+          <ChevronLeft
+            className={`w-5 h-5 text-gray-600 ${isCollapsed ? "rotate-180" : ""}`}
+          />
         </button>
       </div>
 

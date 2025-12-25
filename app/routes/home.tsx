@@ -208,7 +208,7 @@ export default function Home() {
                 <div
                   className={`max-w-[80%] rounded-2xl px-4 py-3 ${
                     message.role === "user"
-                      ? "bg-blue-600 text-white"
+                      ? "bg-blue-100 text-gray-800"
                       : "bg-white border border-gray-200 text-gray-800"
                   }`}
                 >
@@ -222,7 +222,7 @@ export default function Home() {
 
             {isLoading && (
               <div className="flex justify-start">
-                <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3">
+                <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 pt-4">
                   <div className="flex space-x-1">
                     <div
                       className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"

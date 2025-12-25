@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import twemoji from "twemoji";
+import ReactMarkdown from "react-markdown";
 
 interface TwemojiTextProps {
   text: string;
@@ -7,20 +8,19 @@ interface TwemojiTextProps {
 }
 
 export default function TwemojiText({ text, className }: TwemojiTextProps) {
-  const containerRef = useRef<HTMLParagraphElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (containerRef.current) {
       twemoji.parse(containerRef.current, {
         className: "twemoji",
-        base: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/",
       });
     }
   }, [text]);
 
   return (
-    <p ref={containerRef} className={className}>
-      {text}
-    </p>
+    <div ref={containerRef} className={`${className} markdown-content`}>
+      <ReactMarkdown>{text}</ReactMarkdown>
+    </div>
   );
 }
