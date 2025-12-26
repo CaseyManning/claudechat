@@ -15,11 +15,13 @@ import {
   getChatMessages,
   saveMessage,
   deleteChat,
+  deleteLastAssistantMessage,
   type Message,
   type Chat,
 } from "~/chat/chat.server";
 import Sidebar from "~/components/sidebar";
 import TwemojiText from "~/components/twemoji-text";
+import { RefreshCw } from "lucide-react";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Chat" }];
@@ -76,6 +78,23 @@ export async function action({ request }: Route.ActionArgs) {
     return { deletedChatId: chatId };
   }
 
+  if (actionType === "regenerate") {
+    const messagesJson = formData.get("messages") as string;
+    const chatId = formData.get("chatId") as string;
+    const messages: Message[] = JSON.parse(messagesJson);
+
+    // Delete the last assistant message from DB
+    await deleteLastAssistantMessage(chatId);
+
+    // Re-send with only messages up to (not including) the last assistant message
+    const response = await sendMessage(messages);
+    if (response) {
+      await saveMessage(chatId, "assistant", response);
+    }
+
+    return { response, chatId, isRegenerate: true };
+  }
+
   return null;
 }
 
@@ -97,7 +116,22 @@ export default function Home() {
   useEffect(() => {
     const resp = fetcher.data?.response;
     if (resp && fetcher.state === "idle") {
-      setMessages((prev) => [...prev, { role: "assistant", content: resp }]);
+      if (fetcher.data?.isRegenerate) {
+        // Replace the last assistant message
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          // Find and replace the last assistant message
+          for (let i = newMessages.length - 1; i >= 0; i--) {
+            if (newMessages[i].role === "assistant") {
+              newMessages[i] = { role: "assistant", content: resp };
+              break;
+            }
+          }
+          return newMessages;
+        });
+      } else {
+        setMessages((prev) => [...prev, { role: "assistant", content: resp }]);
+      }
     }
     if (fetcher.data?.deletedChatId && fetcher.state === "idle") {
       const deletedId = fetcher.data.deletedChatId;
@@ -136,6 +170,31 @@ export default function Home() {
 
   const handleDeleteChat = (chatId: string) => {
     fetcher.submit({ _action: "deleteChat", chatId }, { method: "post" });
+  };
+
+  const handleRegenerate = () => {
+    if (!activeChatId || isLoading) return;
+
+    // Get messages up to (but not including) the last assistant message
+    const messagesWithoutLastAssistant = [];
+    let foundLastAssistant = false;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (!foundLastAssistant && messages[i].role === "assistant") {
+        foundLastAssistant = true;
+        continue;
+      }
+      messagesWithoutLastAssistant.unshift(messages[i]);
+    }
+
+    fetcher.submit(
+      {
+        _action: "regenerate",
+        messages: JSON.stringify(messagesWithoutLastAssistant),
+        chatId: activeChatId,
+      },
+      { method: "post" }
+    );
+    setMessages(messagesWithoutLastAssistant);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -200,25 +259,47 @@ export default function Home() {
               </div>
             )}
 
-            {messages.map((message, index) => (
-              <div
-                key={index}
-                className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-              >
+            {messages.map((message, index) => {
+              // Check if this is the last assistant message
+              const isLastAssistant =
+                message.role === "assistant" &&
+                index ===
+                  messages.reduce(
+                    (lastIdx, m, i) => (m.role === "assistant" ? i : lastIdx),
+                    -1
+                  );
+
+              return (
                 <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-                    message.role === "user"
-                      ? "bg-blue-100 text-gray-800"
-                      : "bg-white border border-gray-200 text-gray-800"
-                  }`}
+                  key={index}
+                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                 >
-                  <TwemojiText
-                    text={message.content}
-                    className="whitespace-pre-wrap"
-                  />
+                  <div className="max-w-[80%]">
+                    <div
+                      className={` rounded-2xl px-4 py-3 ${
+                        message.role === "user"
+                          ? "bg-blue-100 text-gray-800"
+                          : "bg-white border border-gray-200 text-gray-800"
+                      }`}
+                    >
+                      <TwemojiText
+                        text={message.content}
+                        className="whitespace-pre-wrap"
+                      />
+                    </div>
+                    {isLastAssistant && !isLoading && (
+                      <button
+                        onClick={handleRegenerate}
+                        className="mt-2 p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                        title="Regenerate response"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {isLoading && (
               <div className="flex justify-start">

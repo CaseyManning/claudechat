@@ -64,9 +64,25 @@ export async function deleteChat(chatId: string): Promise<void> {
   await db.delete(chats).where(eq(chats.id, chatId));
 }
 
+export async function deleteLastAssistantMessage(
+  chatId: string
+): Promise<void> {
+  const db = database();
+  const lastMessage = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.chatId, chatId))
+    .orderBy(desc(messages.createdAt))
+    .limit(1);
+
+  if (lastMessage.length > 0 && lastMessage[0].role === "assistant") {
+    await db.delete(messages).where(eq(messages.id, lastMessage[0].id));
+  }
+}
+
 const roleToName = {
-  assistant: "pa",
-  user: "laipa",
+  assistant: "claude",
+  user: "human",
 };
 
 function bannuyOpener(): string {
@@ -151,7 +167,7 @@ Above is the grammar of a contructed language called Bannuy. Continue the conver
 }
 
 function buildSystemMessage(messages: Message[]): string {
-  let content = bannuyOpener() + "\n";
+  let content = "begin conversation:\n";
 
   for (const message of messages) {
     content += `${roleToName[message.role]}: ${message.content}\n`;
