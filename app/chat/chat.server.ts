@@ -33,6 +33,14 @@ export async function getChat(chatId: string): Promise<Chat | undefined> {
   return result[0];
 }
 
+export async function updateChatTitle(
+  chatId: string,
+  title: string
+): Promise<void> {
+  const db = database();
+  await db.update(chats).set({ title }).where(eq(chats.id, chatId));
+}
+
 export async function updateChatNames(
   chatId: string,
   assistantName: string,
@@ -102,6 +110,23 @@ export async function deleteLastAssistantMessage(
 
   if (lastMessage.length > 0 && lastMessage[0].role === "assistant") {
     await db.delete(messages).where(eq(messages.id, lastMessage[0].id));
+  }
+}
+
+export async function deleteLastNMessages(
+  chatId: string,
+  n: number
+): Promise<void> {
+  const db = database();
+  const lastMessages = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.chatId, chatId))
+    .orderBy(desc(messages.createdAt))
+    .limit(n);
+
+  for (const msg of lastMessages) {
+    await db.delete(messages).where(eq(messages.id, msg.id));
   }
 }
 

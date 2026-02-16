@@ -16,14 +16,16 @@ import {
   saveMessage,
   deleteChat,
   deleteLastAssistantMessage,
+  deleteLastNMessages,
   getChat,
   updateChatNames,
+  updateChatTitle,
   type Message,
   type Chat,
 } from "~/chat/chat.server";
 import Sidebar from "~/components/sidebar";
 import TwemojiText from "~/components/twemoji-text";
-import { RefreshCw, Settings } from "lucide-react";
+import { RefreshCw, Settings, Pencil } from "lucide-react";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Chat" }];
@@ -89,7 +91,16 @@ export async function action({ request }: Route.ActionArgs) {
       ? { assistant: chat.assistantName, user: chat.userName }
       : undefined;
 
-    const { title } = await saveMessage(chatId, "user", userMessage);
+    // Set title from first user message if chat has no title yet
+    let title: string | undefined;
+    if (chat && !chat.title) {
+      title = userMessage.length > 40
+        ? userMessage.slice(0, 40).trimEnd() + "..."
+        : userMessage;
+      await updateChatTitle(chatId, title);
+    }
+
+    await saveMessage(chatId, "user", userMessage);
     const response = await sendMessage(messages, roleToName);
     if (response) {
       await saveMessage(chatId, "assistant", response);
@@ -126,6 +137,31 @@ export async function action({ request }: Route.ActionArgs) {
     return { response, chatId, isRegenerate: true };
   }
 
+  if (actionType === "editMessage") {
+    const messagesJson = formData.get("messages") as string;
+    const chatId = formData.get("chatId") as string;
+    const editedMessage = formData.get("editedMessage") as string;
+    const deleteCount = parseInt(formData.get("deleteCount") as string, 10);
+    const messages: Message[] = JSON.parse(messagesJson);
+
+    const chat = await getChat(chatId);
+    const roleToName = chat
+      ? { assistant: chat.assistantName, user: chat.userName }
+      : undefined;
+
+    // Delete the last N messages (the user msg being edited + its assistant reply if any)
+    await deleteLastNMessages(chatId, deleteCount);
+
+    // Save the edited user message and get new response
+    await saveMessage(chatId, "user", editedMessage);
+    const response = await sendMessage(messages, roleToName);
+    if (response) {
+      await saveMessage(chatId, "assistant", response);
+    }
+
+    return { response, chatId, isEdit: true };
+  }
+
   return null;
 }
 
@@ -141,6 +177,10 @@ export default function Home() {
   const [assistantName, setAssistantName] = useState(loadedAssistantName);
   const [userName, setUserName] = useState(loadedUserName);
   const [showNames, setShowNames] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
+  const [editWidth, setEditWidth] = useState<number | null>(null);
+  const lastUserMsgRef = useRef<HTMLDivElement>(null);
 
   const fetcher = useFetcher<typeof action>();
   const namesFetcher = useFetcher<typeof action>();
@@ -160,7 +200,6 @@ export default function Home() {
         // Replace the last assistant message
         setMessages((prev) => {
           const newMessages = [...prev];
-          // Find and replace the last assistant message
           for (let i = newMessages.length - 1; i >= 0; i--) {
             if (newMessages[i].role === "assistant") {
               newMessages[i] = { role: "assistant", content: resp };
@@ -169,6 +208,9 @@ export default function Home() {
           }
           return newMessages;
         });
+      } else if (fetcher.data?.isEdit) {
+        // Edit already updated local messages; just append the new response
+        setMessages((prev) => [...prev, { role: "assistant", content: resp }]);
       } else {
         setMessages((prev) => [...prev, { role: "assistant", content: resp }]);
       }
@@ -243,6 +285,51 @@ export default function Home() {
       { method: "post" }
     );
     setMessages(messagesWithoutLastAssistant);
+  };
+
+  const handleEditStart = (index: number) => {
+    if (lastUserMsgRef.current) {
+      setEditWidth(lastUserMsgRef.current.offsetWidth);
+    }
+    setEditingIndex(index);
+    setEditText(messages[index].content);
+  };
+
+  const handleEditCancel = () => {
+    setEditingIndex(null);
+    setEditText("");
+  };
+
+  const handleEditSubmit = () => {
+    if (!activeChatId || isLoading || editingIndex === null || !editText.trim()) return;
+
+    const editedContent = editText.trim();
+    // Check if there's an assistant reply after this message
+    const hasReplyAfter =
+      editingIndex < messages.length - 1 &&
+      messages[editingIndex + 1]?.role === "assistant";
+    const deleteCount = hasReplyAfter ? 2 : 1;
+
+    // Build new message list: everything before the edited message + the edited message
+    const newMessages = [
+      ...messages.slice(0, editingIndex),
+      { role: "user" as const, content: editedContent },
+    ];
+
+    setMessages(newMessages);
+    setEditingIndex(null);
+    setEditText("");
+
+    fetcher.submit(
+      {
+        _action: "editMessage",
+        messages: JSON.stringify(newMessages),
+        chatId: activeChatId,
+        editedMessage: editedContent,
+        deleteCount: String(deleteCount),
+      },
+      { method: "post" }
+    );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -424,12 +511,18 @@ export default function Home() {
             )}
 
             {messages.map((message, index) => {
-              // Check if this is the last assistant message
               const isLastAssistant =
                 message.role === "assistant" &&
                 index ===
                   messages.reduce(
                     (lastIdx, m, i) => (m.role === "assistant" ? i : lastIdx),
+                    -1
+                  );
+              const isLastUser =
+                message.role === "user" &&
+                index ===
+                  messages.reduce(
+                    (lastIdx, m, i) => (m.role === "user" ? i : lastIdx),
                     -1
                   );
 
@@ -439,26 +532,71 @@ export default function Home() {
                   className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div className="max-w-[80%]">
-                    <div
-                      className={` rounded-2xl px-4 py-3 ${
-                        message.role === "user"
-                          ? "bg-blue-100 text-gray-800"
-                          : "bg-white border border-gray-200 text-gray-800"
-                      }`}
-                    >
-                      <TwemojiText
-                        text={message.content}
-                        className="whitespace-pre-wrap"
-                      />
-                    </div>
-                    {isLastAssistant && !isLoading && (
-                      <button
-                        onClick={handleRegenerate}
-                        className="mt-2 p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                        title="Regenerate response"
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                      </button>
+                    {editingIndex === index ? (
+                      <div className="flex flex-col gap-2" style={editWidth ? { width: editWidth } : undefined}>
+                        <textarea
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              handleEditSubmit();
+                            }
+                            if (e.key === "Escape") handleEditCancel();
+                          }}
+                          autoFocus
+                          rows={3}
+                          className="w-full bg-blue-100 text-gray-800 rounded-2xl px-4 py-3 outline-none focus:ring-1 focus:ring-blue-300 resize-none"
+                        />
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={handleEditCancel}
+                            className="px-3 py-1 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleEditSubmit}
+                            className="px-3 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-gray-700 rounded-lg transition-colors"
+                          >
+                            Send
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="group/msg relative">
+                        <div
+                          ref={isLastUser ? lastUserMsgRef : undefined}
+                          className={` rounded-2xl px-4 py-3 ${
+                            message.role === "user"
+                              ? "bg-blue-100 text-gray-800"
+                              : "bg-white border border-gray-200 text-gray-800"
+                          }`}
+                        >
+                          <TwemojiText
+                            text={message.content}
+                            className="whitespace-pre-wrap"
+                          />
+                        </div>
+                        {isLastAssistant && !isLoading && (
+                          <button
+                            onClick={handleRegenerate}
+                            className="mt-2 p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                            title="Regenerate response"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
+                        )}
+                        {isLastUser && !isLoading && (
+                          <button
+                            onClick={() => handleEditStart(index)}
+                            className="absolute -left-8 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 opacity-0 group-hover/msg:opacity-100 transition-opacity"
+                            title="Edit message"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
