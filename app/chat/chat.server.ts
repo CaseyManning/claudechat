@@ -14,10 +14,35 @@ export interface Message {
 
 export type Chat = InferSelectModel<typeof chats>;
 
-export async function createChat(userId: string): Promise<string> {
+export async function createChat(
+  userId: string,
+  assistantName?: string,
+  userName?: string
+): Promise<string> {
   const db = database();
-  const [chat] = await db.insert(chats).values({ userId }).returning();
+  const values: Record<string, unknown> = { userId };
+  if (assistantName) values.assistantName = assistantName;
+  if (userName) values.userName = userName;
+  const [chat] = await db.insert(chats).values(values).returning();
   return chat.id;
+}
+
+export async function getChat(chatId: string): Promise<Chat | undefined> {
+  const db = database();
+  const result = await db.select().from(chats).where(eq(chats.id, chatId)).limit(1);
+  return result[0];
+}
+
+export async function updateChatNames(
+  chatId: string,
+  assistantName: string,
+  userName: string
+): Promise<void> {
+  const db = database();
+  await db
+    .update(chats)
+    .set({ assistantName, userName })
+    .where(eq(chats.id, chatId));
 }
 
 export async function getUserChats(userId: string): Promise<Chat[]> {
@@ -80,7 +105,7 @@ export async function deleteLastAssistantMessage(
   }
 }
 
-const roleToName = {
+const defaultRoleToName = {
   assistant: "claude",
   user: "human",
 };
@@ -166,7 +191,10 @@ Above is the grammar of a contructed language called Bannuy. Continue the conver
   `;
 }
 
-function buildSystemMessage(messages: Message[]): string {
+function buildSystemMessage(
+  messages: Message[],
+  roleToName: Record<string, string> = defaultRoleToName
+): string {
   let content = "begin conversation:\n";
 
   for (const message of messages) {
@@ -175,15 +203,19 @@ function buildSystemMessage(messages: Message[]): string {
   return content;
 }
 
-export async function sendMessage(messages: Message[]): Promise<string | null> {
-  console.log(buildSystemMessage(messages));
+export async function sendMessage(
+  messages: Message[],
+  roleToName?: Record<string, string>
+): Promise<string | null> {
+  const names = roleToName ?? defaultRoleToName;
+  console.log(buildSystemMessage(messages, names));
   const response = await anthropic.messages.create({
     model: "claude-opus-4-5",
     max_tokens: 1024,
-    system: buildSystemMessage(messages),
-    messages: [{ role: "assistant", content: `${roleToName["assistant"]}:` }],
+    system: buildSystemMessage(messages, names),
+    messages: [{ role: "assistant", content: `${names["assistant"]}:` }],
     stop_sequences: [
-      ...Object.values(roleToName).map((name) => `${name}:`),
+      ...Object.values(names).map((name) => `${name}:`),
       "(Translation",
     ],
   });

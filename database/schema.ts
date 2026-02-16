@@ -34,6 +34,8 @@ export const chats = pgTable("chats", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   title: varchar("title", { length: 100 }),
+  assistantName: varchar("assistant_name", { length: 50 }).default("claude").notNull(),
+  userName: varchar("user_name", { length: 50 }).default("human").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -19,22 +19,6 @@ export default function Sidebar({
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const formatDate = (date: Date) => {
-    const d = new Date(date);
-    const now = new Date();
-    const diffDays = Math.floor(
-      (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24)
-    );
-
-    if (diffDays === 0) return formatTime(d);
-    if (diffDays === 1) return "Yesterday";
-    if (diffDays < 7) return `${diffDays} days ago`;
-    return formatDate(d);
-  };
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  };
 
   return (
     <div
@@ -43,7 +27,7 @@ export default function Sidebar({
       }`}
     >
       {/* Header */}
-      <div className="p-3 border-b border-gray-200 flex items-center justify-between">
+      <div className="p-[10px] border-b border-gray-200 flex items-center justify-between">
         {!isCollapsed && (
           <button
             onClick={onNewChat}
@@ -87,7 +71,7 @@ export default function Sidebar({
                   >
                     <div className="truncate">{chat.title || "New chat"}</div>
                     <div className="text-xs text-gray-500">
-                      {formatDate(chat.updatedAt)}
+                      {chat.updatedAt.toLocaleString()}
                     </div>
                   </button>
                   <button

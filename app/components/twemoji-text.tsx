@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import twemoji from "twemoji";
 import ReactMarkdown from "react-markdown";
+import { renderToStaticMarkup } from "react-dom/server";
 
 interface TwemojiTextProps {
   text: string;
@@ -10,17 +11,17 @@ interface TwemojiTextProps {
 export default function TwemojiText({ text, className }: TwemojiTextProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const html = useMemo(
+    () => renderToStaticMarkup(<ReactMarkdown>{text}</ReactMarkdown>),
+    [text]
+  );
+
   useEffect(() => {
     if (containerRef.current) {
-      twemoji.parse(containerRef.current, {
-        className: "twemoji",
-      });
+      containerRef.current.innerHTML = html;
+      twemoji.parse(containerRef.current, { className: "twemoji" });
     }
-  }, [text]);
+  }, [html]);
 
-  return (
-    <div ref={containerRef} className={`${className} markdown-content`}>
-      <ReactMarkdown>{text}</ReactMarkdown>
-    </div>
-  );
+  return <div ref={containerRef} className={`${className} markdown-content`} />;
 }

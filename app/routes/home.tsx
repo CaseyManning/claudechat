@@ -16,12 +16,14 @@ import {
   saveMessage,
   deleteChat,
   deleteLastAssistantMessage,
+  getChat,
+  updateChatNames,
   type Message,
   type Chat,
 } from "~/chat/chat.server";
 import Sidebar from "~/components/sidebar";
 import TwemojiText from "~/components/twemoji-text";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Settings } from "lucide-react";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Chat" }];
@@ -34,9 +36,16 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const userChats = await getUserChats(user.id);
   let currentMessages: Message[] = [];
+  let assistantName = "claude";
+  let userName = "human";
 
   if (chatId) {
     currentMessages = await getChatMessages(chatId);
+    const chat = await getChat(chatId);
+    if (chat) {
+      assistantName = chat.assistantName;
+      userName = chat.userName;
+    }
   }
 
   return {
@@ -44,6 +53,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     chats: userChats,
     currentChatId: chatId,
     initialMessages: currentMessages,
+    assistantName,
+    userName,
   };
 }
 
@@ -53,8 +64,18 @@ export async function action({ request }: Route.ActionArgs) {
   const actionType = formData.get("_action") as string;
 
   if (actionType === "newChat") {
-    const chatId = await createChat(user.id);
+    const assistantName = (formData.get("assistantName") as string) || undefined;
+    const userName = (formData.get("userName") as string) || undefined;
+    const chatId = await createChat(user.id, assistantName, userName);
     return redirect(`/?chat=${chatId}`);
+  }
+
+  if (actionType === "updateNames") {
+    const chatId = formData.get("chatId") as string;
+    const assistantName = formData.get("assistantName") as string;
+    const userName = formData.get("userName") as string;
+    await updateChatNames(chatId, assistantName, userName);
+    return { updated: true };
   }
 
   if (actionType === "sendMessage") {
@@ -63,8 +84,13 @@ export async function action({ request }: Route.ActionArgs) {
     const userMessage = formData.get("userMessage") as string;
     const messages: Message[] = JSON.parse(messagesJson);
 
+    const chat = await getChat(chatId);
+    const roleToName = chat
+      ? { assistant: chat.assistantName, user: chat.userName }
+      : undefined;
+
     const { title } = await saveMessage(chatId, "user", userMessage);
-    const response = await sendMessage(messages);
+    const response = await sendMessage(messages, roleToName);
     if (response) {
       await saveMessage(chatId, "assistant", response);
     }
@@ -83,11 +109,16 @@ export async function action({ request }: Route.ActionArgs) {
     const chatId = formData.get("chatId") as string;
     const messages: Message[] = JSON.parse(messagesJson);
 
+    const chat = await getChat(chatId);
+    const roleToName = chat
+      ? { assistant: chat.assistantName, user: chat.userName }
+      : undefined;
+
     // Delete the last assistant message from DB
     await deleteLastAssistantMessage(chatId);
 
     // Re-send with only messages up to (not including) the last assistant message
-    const response = await sendMessage(messages);
+    const response = await sendMessage(messages, roleToName);
     if (response) {
       await saveMessage(chatId, "assistant", response);
     }
@@ -99,11 +130,20 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Home() {
-  const { chats, initialMessages } = useLoaderData<typeof loader>();
+  const {
+    chats,
+    initialMessages,
+    assistantName: loadedAssistantName,
+    userName: loadedUserName,
+  } = useLoaderData<typeof loader>();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState("");
+  const [assistantName, setAssistantName] = useState(loadedAssistantName);
+  const [userName, setUserName] = useState(loadedUserName);
+  const [showNames, setShowNames] = useState(false);
 
   const fetcher = useFetcher<typeof action>();
+  const namesFetcher = useFetcher<typeof action>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -160,11 +200,19 @@ export default function Home() {
     setMessages(initialMessages);
   }, [initialMessages]);
 
+  useEffect(() => {
+    setAssistantName(loadedAssistantName);
+    setUserName(loadedUserName);
+    setShowNames(false);
+  }, [loadedAssistantName, loadedUserName]);
+
   const handleSelectChat = async (chatId: string) => {
     setSearchParams({ chat: chatId });
   };
 
   const handleNewChat = () => {
+    setAssistantName("claude");
+    setUserName("human");
     fetcher.submit({ _action: "newChat" }, { method: "post" });
   };
 
@@ -205,8 +253,11 @@ export default function Home() {
 
     if (!chatId) {
       // We need to create a chat first, then send message
-      // For simplicity, create chat inline
-      fetcher.submit({ _action: "newChat" }, { method: "post" });
+      // For simplicity, create chat inline with custom names
+      fetcher.submit(
+        { _action: "newChat", assistantName, userName },
+        { method: "post" }
+      );
       return;
     }
 
@@ -250,12 +301,125 @@ export default function Home() {
       />
 
       <div className="flex-1 flex flex-col">
+        {/* Header bar with role names toggle */}
+        {messages.length > 0 && (
+          <div className="border-b border-gray-200 bg-gray-100">
+            <div className="p-3 flex items-center justify-between">
+              <span className="text-sm text-gray-600">
+                {assistantName} / {userName}
+              </span>
+              <button
+                onClick={() => setShowNames(!showNames)}
+                className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
+                title="Edit role names"
+              >
+                <Settings className="w-4 h-4 text-gray-600" />
+              </button>
+            </div>
+            {showNames && (
+              <div className="px-3 pb-3 flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500">Assistant</label>
+                  <input
+                    type="text"
+                    value={assistantName}
+                    onChange={(e) => {
+                      setAssistantName(e.target.value);
+                      if (activeChatId) {
+                        namesFetcher.submit(
+                          {
+                            _action: "updateNames",
+                            chatId: activeChatId,
+                            assistantName: e.target.value,
+                            userName,
+                          },
+                          { method: "post" }
+                        );
+                      }
+                    }}
+                    className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300 w-28"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500">User</label>
+                  <input
+                    type="text"
+                    value={userName}
+                    onChange={(e) => {
+                      setUserName(e.target.value);
+                      if (activeChatId) {
+                        namesFetcher.submit(
+                          {
+                            _action: "updateNames",
+                            chatId: activeChatId,
+                            assistantName,
+                            userName: e.target.value,
+                          },
+                          { method: "post" }
+                        );
+                      }
+                    }}
+                    className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300 w-28"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Messages area */}
         <div className="flex-1 overflow-y-auto px-4 py-6">
           <div className="max-w-3xl mx-auto space-y-6">
             {messages.length === 0 && (
               <div className="text-center text-gray-500 mt-20">
                 <h1 className="font-medium text-gray-700 mb-2">New chat</h1>
+                <div className="mt-6 inline-flex flex-col gap-3 text-left bg-gray-100 border border-gray-200 rounded-lg px-4 py-3">
+                  <p className="text-xs text-gray-500 font-medium">Role names</p>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500 w-16">Assistant</label>
+                    <input
+                      type="text"
+                      value={assistantName}
+                      onChange={(e) => {
+                        setAssistantName(e.target.value);
+                        if (activeChatId) {
+                          namesFetcher.submit(
+                            {
+                              _action: "updateNames",
+                              chatId: activeChatId,
+                              assistantName: e.target.value,
+                              userName,
+                            },
+                            { method: "post" }
+                          );
+                        }
+                      }}
+                      className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300 w-32"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500 w-16">User</label>
+                    <input
+                      type="text"
+                      value={userName}
+                      onChange={(e) => {
+                        setUserName(e.target.value);
+                        if (activeChatId) {
+                          namesFetcher.submit(
+                            {
+                              _action: "updateNames",
+                              chatId: activeChatId,
+                              assistantName,
+                              userName: e.target.value,
+                            },
+                            { method: "post" }
+                          );
+                        }
+                      }}
+                      className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300 w-32"
+                    />
+                  </div>
+                </div>
               </div>
             )}
 
