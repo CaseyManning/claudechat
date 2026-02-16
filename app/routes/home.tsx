@@ -18,11 +18,12 @@ import {
   deleteLastAssistantMessage,
   deleteLastNMessages,
   getChat,
-  updateChatNames,
+  updateChatSettings,
   updateChatTitle,
   type Message,
   type Chat,
 } from "~/chat/chat.server";
+import { MODELS, DEFAULT_MODEL } from "~/chat/models";
 import Sidebar from "~/components/sidebar";
 import TwemojiText from "~/components/twemoji-text";
 import { RefreshCw, Settings, Pencil } from "lucide-react";
@@ -40,6 +41,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   let currentMessages: Message[] = [];
   let assistantName = "claude";
   let userName = "human";
+  let model = DEFAULT_MODEL;
 
   if (chatId) {
     currentMessages = await getChatMessages(chatId);
@@ -47,6 +49,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     if (chat) {
       assistantName = chat.assistantName;
       userName = chat.userName;
+      model = chat.model;
     }
   }
 
@@ -57,6 +60,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     initialMessages: currentMessages,
     assistantName,
     userName,
+    model,
   };
 }
 
@@ -68,15 +72,17 @@ export async function action({ request }: Route.ActionArgs) {
   if (actionType === "newChat") {
     const assistantName = (formData.get("assistantName") as string) || undefined;
     const userName = (formData.get("userName") as string) || undefined;
-    const chatId = await createChat(user.id, assistantName, userName);
+    const model = (formData.get("model") as string) || undefined;
+    const chatId = await createChat(user.id, assistantName, userName, model);
     return redirect(`/?chat=${chatId}`);
   }
 
-  if (actionType === "updateNames") {
+  if (actionType === "updateSettings") {
     const chatId = formData.get("chatId") as string;
     const assistantName = formData.get("assistantName") as string;
     const userName = formData.get("userName") as string;
-    await updateChatNames(chatId, assistantName, userName);
+    const model = formData.get("model") as string;
+    await updateChatSettings(chatId, assistantName, userName, model);
     return { updated: true };
   }
 
@@ -101,7 +107,7 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     await saveMessage(chatId, "user", userMessage);
-    const response = await sendMessage(messages, roleToName);
+    const response = await sendMessage(messages, roleToName, chat?.model);
     if (response) {
       await saveMessage(chatId, "assistant", response);
     }
@@ -129,7 +135,7 @@ export async function action({ request }: Route.ActionArgs) {
     await deleteLastAssistantMessage(chatId);
 
     // Re-send with only messages up to (not including) the last assistant message
-    const response = await sendMessage(messages, roleToName);
+    const response = await sendMessage(messages, roleToName, chat?.model);
     if (response) {
       await saveMessage(chatId, "assistant", response);
     }
@@ -154,7 +160,7 @@ export async function action({ request }: Route.ActionArgs) {
 
     // Save the edited user message and get new response
     await saveMessage(chatId, "user", editedMessage);
-    const response = await sendMessage(messages, roleToName);
+    const response = await sendMessage(messages, roleToName, chat?.model);
     if (response) {
       await saveMessage(chatId, "assistant", response);
     }
@@ -171,11 +177,13 @@ export default function Home() {
     initialMessages,
     assistantName: loadedAssistantName,
     userName: loadedUserName,
+    model: loadedModel,
   } = useLoaderData<typeof loader>();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState("");
   const [assistantName, setAssistantName] = useState(loadedAssistantName);
   const [userName, setUserName] = useState(loadedUserName);
+  const [model, setModel] = useState(loadedModel);
   const [showNames, setShowNames] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
@@ -245,8 +253,23 @@ export default function Home() {
   useEffect(() => {
     setAssistantName(loadedAssistantName);
     setUserName(loadedUserName);
+    setModel(loadedModel);
     setShowNames(false);
-  }, [loadedAssistantName, loadedUserName]);
+  }, [loadedAssistantName, loadedUserName, loadedModel]);
+
+  const submitSettings = (overrides: { assistantName?: string; userName?: string; model?: string } = {}) => {
+    if (!activeChatId) return;
+    namesFetcher.submit(
+      {
+        _action: "updateSettings",
+        chatId: activeChatId,
+        assistantName: overrides.assistantName ?? assistantName,
+        userName: overrides.userName ?? userName,
+        model: overrides.model ?? model,
+      },
+      { method: "post" }
+    );
+  };
 
   const handleSelectChat = async (chatId: string) => {
     setSearchParams({ chat: chatId });
@@ -255,6 +278,7 @@ export default function Home() {
   const handleNewChat = () => {
     setAssistantName("claude");
     setUserName("human");
+    setModel(DEFAULT_MODEL);
     fetcher.submit({ _action: "newChat" }, { method: "post" });
   };
 
@@ -342,7 +366,7 @@ export default function Home() {
       // We need to create a chat first, then send message
       // For simplicity, create chat inline with custom names
       fetcher.submit(
-        { _action: "newChat", assistantName, userName },
+        { _action: "newChat", assistantName, userName, model },
         { method: "post" }
       );
       return;
@@ -404,7 +428,7 @@ export default function Home() {
               </button>
             </div>
             {showNames && (
-              <div className="px-3 pb-3 flex items-center gap-4">
+              <div className="px-3 pb-3 flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-500">Assistant</label>
                   <input
@@ -412,17 +436,7 @@ export default function Home() {
                     value={assistantName}
                     onChange={(e) => {
                       setAssistantName(e.target.value);
-                      if (activeChatId) {
-                        namesFetcher.submit(
-                          {
-                            _action: "updateNames",
-                            chatId: activeChatId,
-                            assistantName: e.target.value,
-                            userName,
-                          },
-                          { method: "post" }
-                        );
-                      }
+                      submitSettings({ assistantName: e.target.value });
                     }}
                     className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300 w-28"
                   />
@@ -434,20 +448,25 @@ export default function Home() {
                     value={userName}
                     onChange={(e) => {
                       setUserName(e.target.value);
-                      if (activeChatId) {
-                        namesFetcher.submit(
-                          {
-                            _action: "updateNames",
-                            chatId: activeChatId,
-                            assistantName,
-                            userName: e.target.value,
-                          },
-                          { method: "post" }
-                        );
-                      }
+                      submitSettings({ userName: e.target.value });
                     }}
                     className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300 w-28"
                   />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500">Model</label>
+                  <select
+                    value={model}
+                    onChange={(e) => {
+                      setModel(e.target.value as typeof DEFAULT_MODEL);
+                      submitSettings({ model: e.target.value });
+                    }}
+                    className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300"
+                  >
+                    {MODELS.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             )}
@@ -461,7 +480,7 @@ export default function Home() {
               <div className="text-center text-gray-500 mt-20">
                 <h1 className="font-medium text-gray-700 mb-2">New chat</h1>
                 <div className="mt-6 inline-flex flex-col gap-3 text-left bg-gray-100 border border-gray-200 rounded-lg px-4 py-3">
-                  <p className="text-xs text-gray-500 font-medium">Role names</p>
+                  <p className="text-xs text-gray-500 font-medium">Chat settings</p>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-500 w-16">Assistant</label>
                     <input
@@ -469,17 +488,7 @@ export default function Home() {
                       value={assistantName}
                       onChange={(e) => {
                         setAssistantName(e.target.value);
-                        if (activeChatId) {
-                          namesFetcher.submit(
-                            {
-                              _action: "updateNames",
-                              chatId: activeChatId,
-                              assistantName: e.target.value,
-                              userName,
-                            },
-                            { method: "post" }
-                          );
-                        }
+                        submitSettings({ assistantName: e.target.value });
                       }}
                       className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300 w-32"
                     />
@@ -491,20 +500,25 @@ export default function Home() {
                       value={userName}
                       onChange={(e) => {
                         setUserName(e.target.value);
-                        if (activeChatId) {
-                          namesFetcher.submit(
-                            {
-                              _action: "updateNames",
-                              chatId: activeChatId,
-                              assistantName,
-                              userName: e.target.value,
-                            },
-                            { method: "post" }
-                          );
-                        }
+                        submitSettings({ userName: e.target.value });
                       }}
                       className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300 w-32"
                     />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500 w-16">Model</label>
+                    <select
+                      value={model}
+                      onChange={(e) => {
+                        setModel(e.target.value);
+                        submitSettings({ model: e.target.value });
+                      }}
+                      className="bg-gray-200 hover:bg-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-1 focus:ring-gray-300"
+                    >
+                      {MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               </div>
@@ -587,7 +601,7 @@ export default function Home() {
                             <RefreshCw className="w-4 h-4" />
                           </button>
                         )}
-                        {isLastUser && !isLoading && (
+                        {!isLoading && message.role === "user" && (
                           <button
                             onClick={() => handleEditStart(index)}
                             className="absolute -left-8 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 opacity-0 group-hover/msg:opacity-100 transition-opacity"

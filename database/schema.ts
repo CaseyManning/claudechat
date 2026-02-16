@@ -36,6 +36,7 @@ export const chats = pgTable("chats", {
   title: varchar("title", { length: 100 }),
   assistantName: varchar("assistant_name", { length: 50 }).default("claude").notNull(),
   userName: varchar("user_name", { length: 50 }).default("human").notNull(),
+  model: varchar("model", { length: 100 }).default("claude-opus-4-5").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

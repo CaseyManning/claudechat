@@ -17,12 +17,14 @@ export type Chat = InferSelectModel<typeof chats>;
 export async function createChat(
   userId: string,
   assistantName?: string,
-  userName?: string
+  userName?: string,
+  model?: string
 ): Promise<string> {
   const db = database();
   const values: Record<string, unknown> = { userId };
   if (assistantName) values.assistantName = assistantName;
   if (userName) values.userName = userName;
+  if (model) values.model = model;
   const [chat] = await db.insert(chats).values(values).returning();
   return chat.id;
 }
@@ -41,15 +43,16 @@ export async function updateChatTitle(
   await db.update(chats).set({ title }).where(eq(chats.id, chatId));
 }
 
-export async function updateChatNames(
+export async function updateChatSettings(
   chatId: string,
   assistantName: string,
-  userName: string
+  userName: string,
+  model: string
 ): Promise<void> {
   const db = database();
   await db
     .update(chats)
-    .set({ assistantName, userName })
+    .set({ assistantName, userName, model })
     .where(eq(chats.id, chatId));
 }
 
@@ -134,6 +137,8 @@ const defaultRoleToName = {
   assistant: "claude",
   user: "human",
 };
+
+import { DEFAULT_MODEL } from "./models";
 
 function bannuyOpener(): string {
   return `
@@ -230,13 +235,14 @@ function buildSystemMessage(
 
 export async function sendMessage(
   messages: Message[],
-  roleToName?: Record<string, string>
+  roleToName?: Record<string, string>,
+  model?: string
 ): Promise<string | null> {
   const names = roleToName ?? defaultRoleToName;
   console.log(buildSystemMessage(messages, names));
   const response = await anthropic.messages.create({
-    model: "claude-opus-4-5",
-    max_tokens: 1024,
+    model: model || DEFAULT_MODEL,
+    max_tokens: 512,
     system: buildSystemMessage(messages, names),
     messages: [{ role: "assistant", content: `${names["assistant"]}:` }],
     stop_sequences: [

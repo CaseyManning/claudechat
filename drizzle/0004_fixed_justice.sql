@@ -1,0 +1,1 @@
+ALTER TABLE "chats" ADD COLUMN "model" varchar(100) DEFAULT 'claude-opus-4-5' NOT NULL;
